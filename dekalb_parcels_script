@@ -1,0 +1,481 @@
+---
+title: "DeKalb County parcels and building footprints"
+author: "Jennifer Peebles"
+date: "`r format(Sys.Date(), '%b. %d, %Y')`"
+output:
+  pdf_document: default
+  html_document: default
+editor_options:
+  chunk_output_type: console
+urlcolor: blue
+---
+
+```{r setup, eval = TRUE, echo = FALSE, include = FALSE}
+
+# This package will perform exports in WGS84 because that's what we would eventually use in DataWrapper.
+
+# This script was written with the help of ChatGPT. Thank you to ChatGPT and the people who write the code for it. 
+
+# This script uses the esri2sf package to download ArcGIS online data directly into R. esri2sf is cool but it cannot be downloaded through the traditional means of CRAN. But you can download it with this piece of code below. Thank you to Charles Minshew for pointing out to me the existence of esri2sf. 
+if (!requireNamespace("esri2sf", quietly = TRUE)) {
+  if (!requireNamespace("remotes", quietly = TRUE)) install.packages("remotes")
+  remotes::install_github("yonghah/esri2sf")
+}
+
+if (!requireNamespace("geomtextpath", quietly = TRUE)) install.packages("geomtextpath")
+library(geomtextpath)
+
+# Load some packages. This script is written in knitr because I really like it. 
+packages_core <- c("tidyverse", "janitor", "knitr", "magrittr", "lubridate", "readxl", "glue", "stringr", "esri2sf", "ggrepel", "sf", "units", "nhdplusTools", "tigris", "lwgeom", "rmapshaper", "httr", "jsonlite")
+
+lapply(packages_core, function(pkg) {
+  if (!requireNamespace(pkg, quietly = TRUE)) install.packages(pkg)
+  library(pkg, character.only = TRUE)
+})
+
+if (!pkgbuild::has_rtools()) {
+  message("Rtools is not installed or not found in PATH.")
+  message("Visit https://cran.r-project.org/bin/windows/Rtools/ to download the correct version.")
+} else {
+  message("Rtools is installed and ready.")
+}
+
+# Settings and preferred options
+options(digits = 3, 
+        scipen = 999, # turn off scientific notation
+        stringsAsFactors = FALSE,
+        width = 80,
+        tigris_use_cache = TRUE,
+        tigris_class = "sf"
+)
+
+knitr::opts_chunk$set(
+  echo = TRUE, 
+  warning = FALSE, 
+  message = FALSE, 
+  results = "markup",
+  fig.align = "center",
+  fig.width = 6,
+  fig.height = 4,
+  inline = function(x) prettyNum(x, big.mark = ",")
+)
+
+```
+
+```{r get_ready, eval = TRUE, echo = FALSE, include = FALSE}
+
+# If you want to clear out all the variables in your R workspace, I like to do this, you don't have to. Leave this line commented-out if you don't want to. 
+# rm(list = ls(all.names = TRUE))
+
+# Show my working directory
+getwd()
+
+# Function to take a pasted-in file path and turn all the backslashes around the proper way for R
+replace_backslashes <- function(text) {
+  gsub("\\\\", "/", text)
+}
+
+# Be sure to include double backslashes in your original file path or this won't work
+input_string <- "C:\\your\\file\\path\\here\\dekalb_parcels_30daymapchallenge_2025"
+output_string <- replace_backslashes(input_string)
+
+print(input_string)
+print(output_string)
+
+# This is just to take a look at what's going in and coming out
+cat("Original:", input_string, "\n")
+cat("Modified:", output_string, "\n")
+
+base_wd <- output_string
+setwd(input_string)
+if (getwd() != output_string) stop("Whoa, partner! Your working directory is not set correctly!")
+
+# Set today's date. I include these lines of code in all my scripts 
+todays_date <- format(Sys.Date(), '%d %B, %Y') %>% print()
+
+todays_date <- gsub("^0", "", todays_date) %>% print()
+
+todays_date_in_sql_format <- format(Sys.Date(), '%Y-%m-%d') %>% print()
+
+```
+
+```{r dekalb_parcels_and_buffer, eval = TRUE, echo = FALSE, include = FALSE}
+
+# URL for our DeKalb parcels from the county open data site. Thank you to the DeKalb County GIS folks for making the parcel layer available online here. 
+parcel_url <- "https://dcgis.dekalbcountyga.gov/hosted/rest/services/Parcels/MapServer/0"
+
+# Pull entire layer (warning: This file is large and pulling it will take a long time)
+parcels_full <- esri2sf(parcel_url)
+
+# Find the parcel for the CDC
+cdc <- parcels_full %>%  filter(str_detect(SITEADDRESS, "1600 Clifton")) 
+
+cdc <- cdc %>% filter(str_detect(OWNERNME1, "UNITED STATES"))
+
+fed_props_dek <- parcels_full %>%  filter(str_detect(OWNERNME1, "UNITED STATES"))
+
+# --- CRS setup ---
+calc_crs <- 32617     # ops in meters
+out_crs  <- 4326      # WGS84 for DW
+
+fed_props_dek_calc   <- sf::st_transform(fed_props_dek,   calc_crs) # DeKalb federal properties in UTM17N projection
+cdc_calc   <- sf::st_transform(cdc, calc_crs) # CDC parcel at 1600 Clifton in UTM17N
+
+# --- 2-mile perfect circle around parcel center ---
+dist_m <- units::set_units(2, mi) |> units::set_units(m) |> units::drop_units()
+
+cdc_union <- cdc_calc |> sf::st_union() |> sf::st_make_valid()
+
+cdc_poly  <- sf::st_collection_extract(cdc_union, "POLYGON")
+
+if (length(cdc_poly) > 2) cdc_poly <- cdc_poly[which.max(sf::st_area(cdc_poly))]
+
+center_pt_calc <- sf::st_point_on_surface(cdc_poly) |> sf::st_cast("POINT")
+buf_2mi        <- sf::st_buffer(center_pt_calc, dist = dist_m)   # circle in meters
+buf_2mi_wgs    <- sf::st_transform(buf_2mi, out_crs)
+
+# --- Helper: clip-to-circle and return WGS84 ---
+clip_to_circle_4326 <- function(x, calc_crs, circle_calc, out_crs = 4326) {
+  x |>
+    sf::st_zm(drop = TRUE) |>
+    sf::st_make_valid() |>
+    sf::st_transform(calc_crs) |>
+    sf::st_filter(circle_calc, .predicate = sf::st_intersects) |>
+    sf::st_intersection(sf::st_geometry(circle_calc)) |>
+    sf::st_transform(out_crs)
+}
+
+# Parcels in WGS84
+fed_props_dek_clip_4326 <- clip_to_circle_4326(fed_props_dek, calc_crs, buf_2mi, out_crs)
+
+sf_use_s2(FALSE)  # temporarily turn off spherical geometry (prevents errors)
+
+# Clean geometries
+parcels_full <- parcels_full %>%
+  st_make_valid() %>%             # fix self-intersections, etc.
+  st_collection_extract("POLYGON")  # drop non-polygon geometries (if any)
+
+dek_full_parcels_clip_4326 <- clip_to_circle_4326(parcels_full, calc_crs, buf_2mi, out_crs)
+
+sf_use_s2(TRUE) # turns spherical geometry back on. 
+
+cdc_clip_4326 <- clip_to_circle_4326(cdc, calc_crs, buf_2mi, out_crs)
+
+cdc_4326    <- sf::st_transform(cdc, out_crs)
+
+# This next line tells the computer to forget that huge DeKalb Co file that is taking up all the memory on your computer. If you don't want the computer to forget this file, leave this next line commented-out. 
+# rm(parcels_full)
+
+# Clip the Emory University parcels so we can eventually color them all a special color on the map
+emory_clip_4326 <- dek_full_parcels_clip_4326 %>%  
+  filter(str_detect(OWNERNME1, "EMORY|Emory"))
+
+```
+```{r dekalb_bldg_footprints, eval = TRUE, echo = FALSE, include = FALSE}
+
+# This next step: The building footprint file was so large and took so long to download on my computer through automated means that I downloaded it the old fashioned way to my local machine from the DeKalb GIS open data site and then coded this path to it so R can pull it in. Replace this file path with the actual path where you saved the file on your computer. Mine's in a subfolder called gis_data_for_map. 
+dk_buildings <- st_read("gis_data_for_map/DeKalb_Building_Footprints_-1769926832156655521.geojson")
+
+# Clip your buildings layer by your buffer zone ("cookie cutter," as I call it.)
+dk_buildings_clip_4326 <- clip_to_circle_4326(dk_buildings, calc_crs, buf_2mi, out_crs)
+
+# Use this next line of code if you would like the computer to forget the huge file of building footprints. If not, just leave this next line commented-out. 
+# rm(dk_buildings)
+
+```
+
+```{r county_boundaries, eval = TRUE, echo = FALSE, include = FALSE}
+
+# ---- 1) GA counties. Pull from Tigris and then filter to Fulton/DeKalb. I'm getting both Fulton and DeKalb here because DeKalb's boundary is irregular and our buffer zone could spill into adjoining counties at DeKalb's narrowest point. 
+ga_counties <- tigris::counties(state = "GA", cb = TRUE, year = 2023) %>%
+  st_make_valid()
+
+# Filter ga_counties down to just Fulton and DeKalb. 
+co_names <- c("Fulton", "DeKalb")
+
+county_boundaries <- ga_counties %>%
+  filter(NAME %in% co_names)
+
+county_boundaries_clip_4326 <- clip_to_circle_4326(county_boundaries, calc_crs, buf_2mi, out_crs)
+
+fulton_only_4326 <- county_boundaries_clip_4326 %>%  filter(str_detect(NAME, "Fulton"))
+
+dekalb_only_4326 <- county_boundaries_clip_4326 %>%  filter(str_detect(NAME, "Kalb"))
+```
+
+```{r cities, eval = TRUE, echo = FALSE, include = FALSE}
+
+# You might want city boundaries on your map. This will grab the current city boundaries of the cities in the Atlanta Regional Commission purview, which I think is like 11 counties. 
+city_boundaries <- st_read("https://opendata.arcgis.com/datasets/ce216973df894481b7f52a6994934783_0.geojson") %>%
+  st_make_valid()
+
+city_boundaries_clip_4326 <- clip_to_circle_4326(city_boundaries, calc_crs, buf_2mi, out_crs)
+
+# Want to forget the city boundaries file that may be taking up memory on your computer? You can with this next snippet of code. 
+# rm(city_boundaries)
+
+```
+
+```{r roads, eval = TRUE, echo = FALSE, include = FALSE}
+
+# If there's one thing we have in Atlanta, it's roads ... 
+atl_roads <- roads(state = "GA", county = c("Fulton", "DeKalb"), year = 2023)
+
+atl_roads_copy <- st_drop_geometry(atl_roads)
+
+atl_roads_clip_4326 <- clip_to_circle_4326(atl_roads, calc_crs, buf_2mi, out_crs)
+
+tigris_major_roads_clip_4326 <- atl_roads_clip_4326 %>%
+  dplyr::filter(stringr::str_detect(RTTYP, "U"))
+
+# Just pull out the major roads we want to highlight on this map. 
+major_roads_clip_4326 <- atl_roads_clip_4326 %>%  
+  filter(str_detect(FULLNAME, "Clifton Rd NE|^Briarcliff Rd NE|Clairmont|N Decatur Rd|Houston Mill Rd NE"))
+
+clifton_road_clip_4326 <- atl_roads_clip_4326 %>%  
+  filter(str_detect(FULLNAME, "Clifton Rd NE"))
+
+```
+
+```{r hydrology, eval = TRUE, echo = FALSE, include = FALSE}
+
+### --- Hydrology (NHDPlus High Res) ---
+sf_use_s2(FALSE)  # just in case
+
+# Pad buffer slightly to ensure full coverage in meters
+buf_nhd_calc <- st_buffer(cdc_calc, dist = dist_m + 100)  # cdc_calc is UTM
+
+# Compute bbox in geographic coordinates (WGS84)
+buf_nhd_wgs <- st_transform(buf_nhd_calc, 4326)
+bbpad <- st_bbox(buf_nhd_wgs) + c(-0.003, -0.003, 0.003, 0.003)
+
+# Try subset_nhdplus() robustly (new vs. old versions differ)
+has_AOI <- "AOI" %in% names(formals(nhdplusTools::subset_nhdplus))
+
+nhd <- tryCatch({
+  if (has_AOI) {
+    nhdplusTools::subset_nhdplus(
+      AOI = buf_nhd_wgs,
+      nhdplus_data = "download",
+      return_data = TRUE,
+      flowline_only = FALSE
+    )
+  } else {
+    nhdplusTools::subset_nhdplus(
+      bbox = bbpad,
+      nhdplus_data = "download",
+      return_data = TRUE,
+      flowline_only = FALSE
+    )
+  }
+}, error = function(e) {
+  message("⚠️ NHDPlus download failed: ", e$message)
+  return(NULL)
+})
+
+# Handle flowlines + waterbodies safely
+if (!is.null(nhd)) {
+  ln_name <- grep("Flowline", names(nhd), value = TRUE)[1]
+  wb_name <- grep("Waterbody", names(nhd), value = TRUE)[1]
+
+  if (!is.na(ln_name) && nrow(nhd[[ln_name]]) > 0) {
+    flow_clip_4326 <- nhd[[ln_name]] |>
+      st_zm(drop = TRUE) |>
+      st_make_valid() |>
+      st_transform(32617) |>
+      st_intersection(st_geometry(buf_2mi)) |>
+      st_transform(4326)
+  }
+
+  if (!is.na(wb_name) && nrow(nhd[[wb_name]]) > 0) {
+    water_clip_4326 <- nhd[[wb_name]] |>
+      st_zm(drop = TRUE) |>
+      st_make_valid() |>
+      st_transform(32617) |>
+      st_intersection(st_geometry(buf_2mi)) |>
+      st_transform(4326)
+  }
+}
+sf_use_s2(TRUE)
+
+
+```
+
+```{r railroads, eval = TRUE, echo = FALSE, include = FALSE}
+
+rails_us <- tigris::rails(year = 2024) |> sf::st_transform(out_crs)
+
+rails_clip_4326 <- clip_to_circle_4326(rails_us, calc_crs, buf_2mi, out_crs)
+
+```
+
+```{r dekalb_parks, eval = TRUE, echo = FALSE, include = FALSE}
+
+# Parks layer
+parks_url <- "https://dcgis.dekalbcountyga.gov/mapping/rest/services/Parks/FeatureServer/0"
+
+# Pull in parks using esri2sf (this should work since it's a FeatureServer)
+parks_full <- esri2sf(parks_url)
+
+# Make sure geometry is valid
+parks_full <- parks_full %>% st_make_valid()
+
+# Clip to the same buffer (in calc_crs) then transform to WGS84
+parks_clip_4326 <- clip_to_circle_4326(parks_full, calc_crs, buf_2mi, out_crs)
+
+# Drop parks_full to free memory
+# rm(parks_full)
+
+```
+
+
+```{r build_the_map, eval = TRUE, echo = FALSE, include = FALSE}
+
+# # --- Watermark helper (define first). You may not want the watermark on your map, in which case, leave this commented-out ---
+# add_watermark_sf <- function(p, aoi,
+#                              label   = "NOT FOR PUBLICATION",
+#                              pos     = c("center","tl","tr","bl","br"),
+#                              angle   = 30,
+#                              size    = 12,
+#                              color   = "grey80",
+#                              alpha   = 0.5,
+#                              fontface = "bold",
+#                              offset_frac = 0.06) {
+#   stopifnot(inherits(aoi, "sf") || inherits(aoi, "sfc"))
+#   pos <- match.arg(pos)
+# 
+#   bb <- sf::st_bbox(aoi)
+#   dx <- as.numeric(bb["xmax"] - bb["xmin"])
+#   dy <- as.numeric(bb["ymax"] - bb["ymin"])
+# 
+#   loc <- switch(
+#     pos,
+#     center = c(bb["xmin"] + dx*0.50, bb["ymin"] + dy*0.50),
+#     tl     = c(bb["xmin"] + dx*offset_frac, bb["ymax"] - dy*offset_frac),
+#     tr     = c(bb["xmax"] - dx*offset_frac, bb["ymax"] - dy*offset_frac),
+#     bl     = c(bb["xmin"] + dx*offset_frac, bb["ymin"] + dy*offset_frac),
+#     br     = c(bb["xmax"] - dx*offset_frac, bb["ymin"] + dy*offset_frac)
+#   )
+# 
+#   lab <- sf::st_sf(label = label,
+#                    geometry = sf::st_sfc(sf::st_point(loc), crs = sf::st_crs(aoi)))
+# 
+#   p + ggplot2::geom_sf_text(
+#     data = lab,
+#     ggplot2::aes(label = label),
+#     inherit.aes = FALSE,
+#     color = color, alpha = alpha, angle = angle,
+#     size = size, fontface = fontface, show.legend = FALSE
+#   )
+# }
+
+map <- ggplot() +
+  # 2-mile buffer boundary
+  geom_sf(data = buf_2mi_wgs, aes(linetype = "2-mile radius"),
+          fill = NA, linewidth = 0.8, color = "black", show.legend = TRUE) +
+    # # Parcels (very light gray)
+ geom_sf(data = dek_full_parcels_clip_4326,
+        fill = "grey90", color = NA, alpha = 0.10, show.legend = FALSE) +
+    # County boundaries (thin black outline only)
+geom_sf(data = county_boundaries_clip_4326,
+        color = "black", fill = NA, linewidth = 0.4) +
+geom_sf(data = dekalb_only_4326,
+        color = "black", fill = NA, linewidth = 0.6, alpha = 0.9) +
+geom_sf(data = fulton_only_4326,
+        color = "black", fill = NA, linewidth = 0.6, alpha = 0.9) +
+  # City boundary (soft orange fill, no border)
+geom_sf(data = city_boundaries_clip_4326,
+        fill = "orange", color = NA, alpha = 0.15, show.legend = FALSE) +
+
+ geom_sf(data = emory_clip_4326, aes(fill = "Emory University"),
+        color = NA, alpha = 0.3, show.legend = TRUE) +
+geom_sf(data = cdc_clip_4326, aes(fill = "CDC main campus"),
+        color = "black", linewidth = 0.3, alpha = 0.6, show.legend = TRUE) +
+    # Roads
+geom_sf(data = atl_roads_clip_4326,
+        color = "grey60", linewidth = 0.2, alpha = 0.3, show.legend = FALSE) +
+geom_sf(data = major_roads_clip_4326,
+        color = "black", linewidth = 0.5, alpha = 0.8, show.legend = FALSE) +
+    # Railroads (subtle gray)
+geom_sf(data = rails_clip_4326,
+        color = "grey40", linewidth = 0.2, alpha = 0.3, show.legend = FALSE) +
+ 
+   # DeKalb Co parks
+geom_sf(data = parks_clip_4326,
+        fill = "forestgreen", color = NA, alpha = 0.3, show.legend = FALSE) +
+
+    # Building footprints (very light gray, subtle background)
+  geom_sf(data = dk_buildings_clip_4326, aes(fill = "Building footprints"),
+          color = NA, linewidth = 0.5, alpha = 1) +
+
+    # Rivers and streams (blue lines)
+geom_sf(data = flow_clip_4326,
+        color = "lightblue", linewidth = 0.4, alpha = 1, show.legend = FALSE) +
+geom_sf(data = water_clip_4326,
+        fill = "lightblue", color = NA, alpha = 0.8, show.legend = FALSE) +
+# Legend + scales
+  scale_fill_manual(
+  name = "Key areas",
+  values = c(
+    "CDC main campus"   = "#d94801",  # reddish-orange
+    "Emory University"  = "#f768a1"   # pink
+  ),
+  guide = guide_legend(
+    override.aes = list(alpha = 0.6),
+    title.position = "top"
+  )
+) +
+scale_color_manual(name = NULL, guide = "none") +
+  scale_linetype_manual(name = NULL, values = c("2-mile radius" = "solid")) +
+  guides(
+    fill      = guide_legend(order = 1, override.aes = list(color = NA, alpha = 0.7)),
+    color     = guide_legend(order = 2, override.aes = list(linewidth = 1.2)),
+    linetype  = guide_legend(order = 3, override.aes = list(color = "black", linewidth = 0.6))
+  ) +
+  labs(
+    title = "DeKalb County parcels: Emory and the CDC area",
+    subtitle = "A look at parcels (with building footprints) in the area within two miles of the CDC.",
+    caption = "Map shows 2-mile radius of CDC main property, projected to WGS84 (EPSG:4326).\nData sources: DeKalb County; Atlanta Regional Commission;\nU.S. Census Bureau; U.S. Geological Survey.\nMap by Jennifer Peebles with coding help from ChatGPT"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.major = element_blank(),
+    axis.text = element_blank(),
+    axis.title = element_blank(),
+    axis.ticks = element_blank(),
+    legend.position = "right"
+  ) +
+  coord_sf()
+
+# put watermark in place
+# map_wm <- add_watermark_sf(
+#   p = map,
+#   aoi = buf_2mi_wgs,  # any sf object covering your map area
+#   label = "NOT FOR PUBLICATION",
+#   pos = "center",     # "center", "tl", "tr", "bl", "br"
+#   angle = 30,
+#   size = 9,
+#   color = "grey80",
+#   alpha = 0.7,
+#   fontface = "bold"
+# )
+
+plot(map)
+
+```
+
+```{r export_plots_as_static_images, eval = TRUE, echo = FALSE, include = FALSE}
+
+
+# JPG preview (unchanged; just note it’s WGS84 now)
+ts <- format(Sys.time(), "%Y%m%d_%H%M%S")
+
+jpg_path <- glue::glue("outputs/dekalb_parcels_map_{ts}.jpg")
+
+dir.create("outputs", showWarnings = FALSE, recursive = TRUE)
+
+ggsave(filename = jpg_path, plot = map, width = 9, height = 7, units = "in", dpi = 300)
+
+file.copy(jpg_path, "outputs/dekalb_parcels_map.jpg", overwrite = TRUE)
+
+```
