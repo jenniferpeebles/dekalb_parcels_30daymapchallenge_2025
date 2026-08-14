@@ -1,70 +1,88 @@
-# DeKalb County parcels and building footprints
+# DeKalb County parcels around Emory and the CDC
 
-A reproducible R mapping project for the 2025 [30 Day Map Challenge](https://30daymapchallenge.com/). It maps parcels and building footprints within two miles of the Centers for Disease Control and Prevention's main campus in DeKalb County, Georgia, with context for Emory University, roads, parks and county boundaries.
+An R and `sf` mapping project exploring parcels, building footprints and civic geography within two miles of the Centers for Disease Control and Prevention's main-campus parcel in DeKalb County, Georgia.
 
-## What this project does
+Created by Jennifer Peebles for the 2025 [30 Day Map Challenge](https://30daymapchallenge.com/).
 
-The plain-R, numbered workflow:
+> **Editorial status:** Exploratory and not for publication. The workflow generates a watermarked review map, QA tables and a reporter brief. Results require human review before use in reporting.
 
-1. downloads public parcel and boundary layers;
-2. identifies the CDC campus parcel from address and owner fields;
-3. creates a two-mile buffer in a projected coordinate system;
-4. clips contextual layers to that study area;
-5. runs QA checks before drawing the map;
-6. saves a timestamped review map and a stable latest copy; and
-7. exports the mapped study-area layers as WGS84 GeoJSON.
+## At a glance
 
-The project does **not** impute or manufacture missing values. The map is exploratory and marked **NOT FOR PUBLICATION** until a reporter has reviewed the source fields, geography and QA outputs.
+| | |
+|---|---|
+| Study area | Two-mile circle centered within the selected CDC parcel |
+| Parcel source | DeKalb County GIS tax-parcel service, May 2026 vintage |
+| Building source | DeKalb County GIS building footprints, described in metadata as 2024 |
+| Output geography | WGS84 / EPSG:4326 |
+| Main entry point | `source("run_all.R")` |
+| Framework | Peebles Pipeline and PeeblesToolbox |
 
-## Repository structure
+The most recent verified run produced:
 
-```text
-data_raw/      Locally downloaded source data (ignored by Git)
-data_clean/    Reproducible intermediate data (ignored by Git)
-exports/       WGS84 GeoJSON for Datawrapper (ignored by Git)
-logs/          Run logs and session information (ignored by Git)
-outputs/       QA tables, reporter brief and map images (ignored by Git)
-scripts/       Numbered analysis scripts
-```
+- 12,950 parcel features intersecting the study area;
+- 14,328 building-footprint features;
+- 18 park features;
+- 158 parcel records whose first owner-name field matched `EMORY`; and
+- one parcel matching the configured CDC address and federal owner criteria.
 
-## Data sources
+These are workflow counts, not independently verified findings about legal ownership or campus boundaries.
 
-| Layer | Publisher | Vintage used by script | Acquisition |
-|---|---|---:|---|
-| Tax parcels | DeKalb County GIS | May 2026, as identified by the repository owner; live service at run time | ArcGIS REST service |
-| Building footprints | DeKalb County GIS | Metadata describes the dataset as 2024; live service at run time | ArcGIS Feature Service |
-| County boundaries | U.S. Census Bureau TIGER/Line | 2024 | `PeeblesToolbox::get_ga_counties()` |
-| Roads and rails | U.S. Census Bureau TIGER/Line | 2024 | `tigris` |
-| Municipal boundaries | Atlanta Regional Commission | Live service at run time | GeoJSON URL |
-| Parks | DeKalb County GIS | Live service at run time | ArcGIS REST service |
+## What the pipeline does
 
-Live services can change without notice. The script records run time and R session details, but a fully archival reproduction would also require retaining dated source snapshots and their licenses/terms.
+The project turns public GIS services into reproducible newsroom assets:
 
-## Before running
+1. queries the CDC parcel from the county tax-parcel service;
+2. constructs a two-mile study area using a projected CRS appropriate for distance calculations;
+3. downloads parcels, buildings and parks intersecting the study-area envelope;
+4. clips county, municipal, road and rail layers to the final circle;
+5. saves reusable intermediate `sf` objects;
+6. runs geometry, missingness and duplication QA before mapping;
+7. builds a watermarked static review map;
+8. exports WGS84 GeoJSON for Datawrapper; and
+9. writes a reporter brief, run log and R session information.
 
-Install R 4.2 or newer, then install the dependencies once from the R console. The project does not use `knitr`, R Markdown or `esri2sf`:
+No values are imputed, interpolated, backfilled or otherwise manufactured. Missingness and duplicate records remain visible in QA outputs.
+
+## Quick start
+
+### 1. Install dependencies
+
+Use R 4.2 or newer. Install the project packages once from the R console:
 
 ```r
 install.packages(c(
-  "beepr", "dplyr", "ggplot2", "httr2", "janitor", "jsonlite", "pak",
-  "readr", "sf", "stringr", "tigris", "units"
+  "beepr",
+  "dplyr",
+  "ggplot2",
+  "httr2",
+  "janitor",
+  "jsonlite",
+  "pak",
+  "readr",
+  "sf",
+  "stringr",
+  "tigris",
+  "units"
 ))
+
 pak::pak("jenniferpeebles/peeblestoolbox")
 ```
 
-The script downloads both parcels and building footprints from public DeKalb County GIS services. No manual building-footprint download is required. Large downloaded or generated files remain excluded from Git. Do not put API keys, database credentials, `.Renviron`, unpublished source material or personally identifying data in this repository.
+The project deliberately does not depend on `knitr`, R Markdown or `esri2sf`.
 
-The building-footprint item is credited to the DeKalb County GIS Department and licensed under [Creative Commons Attribution 4.0](https://creativecommons.org/licenses/by/4.0/). Its ArcGIS item ID is `924edf6853404f2abb064eecd06b776a`.
+### 2. Run the complete project
 
-## Run the project
-
-Open the repository root in RStudio and run the complete pipeline:
+Open the repository root in RStudio, then run:
 
 ```r
 source("run_all.R")
 ```
 
-Or run and inspect each numbered stage in order:
+Each stage reports progress to the console, stops when required QA fails, announces successful completion and beeps.
+
+### 3. Run one stage at a time
+
+For closer inspection, execute the numbered scripts in order:
 
 ```r
 source("scripts/01_acquire_and_prepare_data.R")
@@ -72,31 +90,115 @@ source("scripts/02_run_qa.R")
 source("scripts/03_build_map_and_exports.R")
 ```
 
-Important settings—including the two-mile radius, source URLs, source vintages and output CRS—are grouped in `scripts/00_config.R`. Reusable functions live in `R/helpers.R`. No machine-specific working directory is required. Each stage prints progress, stops on failed QA, announces successful completion and beeps.
+Project-wide settings—including source URLs, vintages, the buffer radius and coordinate reference systems—live in `scripts/00_config.R`. Reusable download, clipping, QA and file helpers live in `R/helpers.R`.
 
-Expected outputs include:
+## Project structure
 
-- `outputs/qa_summary.csv`
-- `outputs/reporter_brief.md`
-- `outputs/dekalb_parcels_map_latest.jpg`
-- timestamped JPG map and run log
-- WGS84 GeoJSON files in `exports/`
-- `logs/session_info.txt`
+```text
+dekalb_parcels_30daymapchallenge_2025/
+├── R/
+│   └── helpers.R                      Reusable download, GIS and QA helpers
+├── scripts/
+│   ├── 00_config.R                    Packages, paths, sources and settings
+│   ├── 01_acquire_and_prepare_data.R  Download, clip and save spatial layers
+│   ├── 02_run_qa.R                    Inspect geometry, fields and duplicates
+│   └── 03_build_map_and_exports.R     Map, GeoJSON and reporter brief
+├── data_raw/                          Optional local source files; ignored
+├── data_clean/                        Intermediate RDS files; ignored
+├── outputs/                           Maps, QA and reporter brief; ignored
+├── exports/                           WGS84 GeoJSON; ignored
+├── logs/                              Run logs and session details; ignored
+├── run_all.R                          Complete pipeline entry point
+└── README.md
+```
 
-## QA and interpretation
+Generated data and review products are excluded from Git. The repository retains only `.gitkeep` placeholders for the output directories.
 
-The script stops when it cannot uniquely identify a CDC campus parcel, when required geometry is missing, or when a layer has no CRS. It reports record counts, invalid geometries, missing owner/address values and clipped-layer counts. These checks show whether the workflow behaved as expected; they do not independently verify ownership records or establish the legal boundaries of a campus.
+## Data sources
 
-The two-mile circle is centered on a point guaranteed to fall on the selected parcel. It is **not** a two-mile buffer around the entire CDC campus boundary, a travel-time area, or an exposure zone. That distinction should remain explicit in any reporting.
+| Layer | Publisher | Vintage | Acquisition |
+|---|---|---|---|
+| Tax parcels | DeKalb County GIS | May 2026, identified by the repository owner | ArcGIS REST `MapServer` |
+| Building footprints | DeKalb County GIS | Described in item metadata as 2024 | ArcGIS REST `FeatureServer` |
+| Parks | DeKalb County GIS | Live service at run time | ArcGIS REST `FeatureServer` |
+| Municipal boundaries | Atlanta Regional Commission | Live service at run time | GeoJSON |
+| County boundaries | U.S. Census Bureau TIGER/Line | 2024 | `PeeblesToolbox::get_ga_counties()` |
+| Roads and rails | U.S. Census Bureau TIGER/Line | 2024 | `tigris` |
 
-## Publication audit
+The building-footprint layer is credited to the DeKalb County GIS Department and licensed under [Creative Commons Attribution 4.0](https://creativecommons.org/licenses/by/4.0/). Its ArcGIS item ID is [`924edf6853404f2abb064eecd06b776a`](https://www.arcgis.com/home/item.html?id=924edf6853404f2abb064eecd06b776a).
 
-The repository was reviewed before this rewrite. The three original commits contained only the short README and an approximately 18 KB R Markdown script. No credentials, `.Renviron` file, private key, raw parcel data or building-footprint data were found in the tracked snapshot. Commit metadata uses a GitHub no-reply address. Automated scanning reduces risk but is not a guarantee; GitHub's secret-scanning/security page should also be checked before treating the audit as complete.
+Live GIS services can change without notice. The workflow records run time and R session details, but a fully archival reproduction would also require dated snapshots of every source and documentation of the applicable terms at download time.
+
+## Outputs
+
+A successful run creates:
+
+| Output | Purpose |
+|---|---|
+| `outputs/dekalb_parcels_map_latest.jpg` | Stable copy of the watermarked review map |
+| `outputs/dekalb_parcels_map_<timestamp>.jpg` | Timestamped review map |
+| `outputs/qa_summary.csv` | Record, geometry and CRS checks by layer |
+| `outputs/qa_parcel_fields.csv` | Missing and duplicate parcel-field checks |
+| `outputs/qa_cdc_parcel_candidates.csv` | Human-review table for the CDC match |
+| `outputs/reporter_brief.md` | Findings, possible angles and caveats |
+| `exports/*.geojson` | WGS84 study-area layers for Datawrapper |
+| `logs/session_info.txt` | R version and package environment |
+| `logs/run_<timestamp>.log` | Completion time and run identifier |
+
+## QA results from the verified run
+
+All nine mapped layers finished in EPSG:4326 with zero empty geometries and zero invalid geometries after processing.
+
+Parcel QA also found:
+
+| Check | Records |
+|---|---:|
+| Missing site address | 41 |
+| Missing first owner name | 36 |
+| Duplicate parcel ID | 24 |
+| Duplicate geometry | 541 |
+
+The duplicate-geometry count is not automatically treated as an error. DeKalb County's parcel-service description says condominium units can produce redundant geometry. The pipeline reports those records rather than deleting, combining or imputing them.
+
+## Methodology and reporting cautions
+
+### The study area is a point-centered circle
+
+The script selects one parcel using configured address and owner-name criteria, finds a point guaranteed to fall within that parcel, and draws a two-mile circle around the point in NAD83 / UTM zone 17N (EPSG:32617).
+
+The circle is **not**:
+
+- a buffer around the complete CDC campus boundary;
+- a two-mile travel distance;
+- a travel-time area;
+- an exposure or public-health zone; or
+- a statement about the CDC's legal campus limits.
+
+### Owner matching is text matching
+
+The CDC candidate depends on an address match for `1600 Clifton` and an owner-name match for `UNITED STATES`. Emory parcels are identified when the first owner-name field contains `EMORY`, ignoring case. These rules can miss affiliates, alternate spellings or ownership recorded in another field, and they can include records needing human review.
+
+### QA is necessary but not sufficient
+
+A successful script run shows that the code completed and its programmed checks passed. It does not independently verify the county's source records, legal ownership, source completeness or the editorial meaning of a mapped pattern.
+
+## Reproducibility and publication safety
+
+- `.Renviron`, R workspace files and editor state are ignored.
+- Raw, intermediate and generated data are ignored.
+- Maps, QA files, GeoJSON, logs and reporter briefs are ignored.
+- Portable developer tools under `.tools/` are ignored.
+- Secrets belong only in local environment files and are not required by this project.
+- The public repository was scanned for common credential and private-key patterns before publication; none were found.
+
+Automated scanning lowers risk but is not a guarantee. Review GitHub's security tools and the staged diff before every publication.
 
 ## License and reuse
 
-No software or data license has been selected yet. Until the repository owner adds one, the code remains publicly viewable but is not automatically licensed for reuse. Source datasets retain their publishers' terms. Add a license only after confirming the desired reuse policy and each data source's requirements.
+No license has been selected for this repository's code. Public visibility alone does not grant permission to reuse it. Each source dataset retains its publisher's terms, including the CC BY 4.0 terms attached to the building-footprint item.
 
 ## Credits
 
-Project and map by Jennifer Peebles, with coding assistance from ChatGPT. Thanks to DeKalb County GIS, the Atlanta Regional Commission, the U.S. Census Bureau and the U.S. Geological Survey for public data access.
+Project, analysis and map by Jennifer Peebles, with coding assistance from ChatGPT.
+
+Thanks to DeKalb County GIS, the Atlanta Regional Commission and the U.S. Census Bureau for making the underlying public data available. Peebles Pipeline principles shaped the project architecture; [PeeblesToolbox](https://github.com/jenniferpeebles/peeblestoolbox) supplies reusable newsroom mapping and export helpers.
