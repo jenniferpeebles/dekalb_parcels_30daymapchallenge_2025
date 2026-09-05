@@ -1,6 +1,6 @@
 # DeKalb County parcels around Emory and the CDC
 
-An R and `sf` mapping project exploring parcels, building footprints and civic geography within two miles of the Centers for Disease Control and Prevention's main-campus parcel in DeKalb County, Georgia.
+An R and `sf` mapping project exploring parcels, building footprints and civic geography within two miles of the Centers for Disease Control and Prevention's main-campus parcel in DeKalb County, Ga.
 
 Created by Jennifer Peebles for the 2025 [30 Day Map Challenge](https://30daymapchallenge.com/).
 
@@ -188,17 +188,15 @@ A successful script run shows that the code completed and its programmed checks 
 - Raw, intermediate and generated data are ignored.
 - Maps, QA files, GeoJSON, logs and reporter briefs are ignored.
 - Portable developer tools under `.tools/` are ignored.
-- Secrets belong only in local environment files and are not required by this project.
-- The public repository was scanned for common credential and private-key patterns before publication; none were found.
 
 Automated scanning lowers risk but is not a guarantee. Review GitHub's security tools and the staged diff before every publication.
 
-## License and reuse
+## License
 
-No license has been selected for this repository's code. Public visibility alone does not grant permission to reuse it. Each source dataset retains its publisher's terms, including the CC BY 4.0 terms attached to the building-footprint item.
+MIT license
 
 ## Credits
 
 Project, analysis and map by Jennifer Peebles, with coding assistance from ChatGPT.
 
-Thanks to DeKalb County GIS, the Atlanta Regional Commission and the U.S. Census Bureau for making the underlying public data available. Peebles Pipeline principles shaped the project architecture; [PeeblesToolbox](https://github.com/jenniferpeebles/peeblestoolbox) supplies reusable newsroom mapping and export helpers.
+Thanks to DeKalb County GIS, the Atlanta Regional Commission and the U.S. Census Bureau for making the underlying public data available. [PeeblesToolbox](https://github.com/jenniferpeebles/peeblestoolbox) supplies reusable newsroom mapping and export helpers.
